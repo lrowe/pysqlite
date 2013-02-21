@@ -140,6 +140,9 @@ class MyBuildExt(build_ext):
 
 def get_setup_args():
 
+    if os.environ.get('STATICBUILD', '').lower() == 'true':
+        MyBuildExt.amalgamation = True
+
     PYSQLITE_VERSION = None
 
     version_re = re.compile('#define PYSQLITE_VERSION "(.*)"')
