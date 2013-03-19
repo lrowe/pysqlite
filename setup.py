@@ -88,20 +88,22 @@ class DocBuilder(Command):
 AMALGAMATION_ROOT = "amalgamation"
 DOWNLOAD_PAGE_URL = "http://sqlite.org/download.html"
 
-def get_amalgamation():
+def get_amalgamation(amalgamation_url=None):
     """Download the SQLite amalgamation if it isn't there, already."""
     if os.path.exists(AMALGAMATION_ROOT):
+        print "Reusing amalgamation: %s" % os.path.abspath(AMALGAMATION_ROOT)
         return
     os.mkdir(AMALGAMATION_ROOT)
-    print "Downloading amalgation."
 
-    # find out what's current amalgamation ZIP file
-    download_page = urllib.urlopen(DOWNLOAD_PAGE_URL).read()
-    pattern = re.compile(r'''href="(.*?sqlite-amalgamation.*?\.zip)"''')
-    download_file = pattern.findall(download_page)[0]
-    amalgamation_url = urlparse.urljoin(DOWNLOAD_PAGE_URL, download_file)
+    if amalgamation_url is None:
+        print "Finding current amalgation ZIP from: %s" % DOWNLOAD_PAGE_URL
+        download_page = urllib.urlopen(DOWNLOAD_PAGE_URL).read()
+        pattern = re.compile(r'''href="(.*?sqlite-amalgamation.*?\.zip)"''')
+        download_file = pattern.findall(download_page)[0]
+        amalgamation_url = urlparse.urljoin(DOWNLOAD_PAGE_URL, download_file)
 
     # and download it
+    print "Downloading amalgamation: %s" % amalgamation_url
     urllib.urlretrieve(amalgamation_url, "tmp.zip")
 
     zf = zipfile.ZipFile("tmp.zip")
@@ -124,10 +126,11 @@ class AmalgamationBuilder(build):
 
 class MyBuildExt(build_ext):
     amalgamation = False
+    amalgamation_url = None
 
     def build_extension(self, ext):
         if self.amalgamation:
-            get_amalgamation()
+            get_amalgamation(self.amalgamation_url)
             ext.define_macros.append(("SQLITE_ENABLE_FTS3", "1"))   # build with fulltext search enabled
             ext.define_macros.append(("SQLITE_ENABLE_RTREE", "1"))   # build with fulltext search enabled
             ext.sources.append(os.path.join(AMALGAMATION_ROOT, "sqlite3.c"))
@@ -144,6 +147,8 @@ def get_setup_args():
 
     if os.environ.get('STATICBUILD', '').lower() == 'true':
         MyBuildExt.amalgamation = True
+
+    MyBuildExt.amalgamation_url = os.environ.get('SQLITE_AMALGAMATION_URL', None)
 
     PYSQLITE_VERSION = None
 
