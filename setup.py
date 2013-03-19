@@ -23,6 +23,7 @@
 
 import glob, os, re, sys
 import urllib
+import urlparse
 import zipfile
 
 from distutils.core import setup, Extension, Command
@@ -85,6 +86,7 @@ class DocBuilder(Command):
             print "Is sphinx installed? If not, try 'sudo easy_install sphinx'."
 
 AMALGAMATION_ROOT = "amalgamation"
+DOWNLOAD_PAGE_URL = "http://sqlite.org/download.html"
 
 def get_amalgamation():
     """Download the SQLite amalgamation if it isn't there, already."""
@@ -94,10 +96,10 @@ def get_amalgamation():
     print "Downloading amalgation."
 
     # find out what's current amalgamation ZIP file
-    download_page = urllib.urlopen("http://sqlite.org/download.html").read()
-    pattern = re.compile("(sqlite-amalgamation.*?\.zip)")
+    download_page = urllib.urlopen(DOWNLOAD_PAGE_URL).read()
+    pattern = re.compile(r'''href="(.*?sqlite-amalgamation.*?\.zip)"''')
     download_file = pattern.findall(download_page)[0]
-    amalgamation_url = "http://sqlite.org/" + download_file
+    amalgamation_url = urlparse.urljoin(DOWNLOAD_PAGE_URL, download_file)
 
     # and download it
     urllib.urlretrieve(amalgamation_url, "tmp.zip")
