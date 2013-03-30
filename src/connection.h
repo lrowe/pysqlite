@@ -104,6 +104,11 @@ typedef struct
      * destructor */
     PyObject* apsw_connection;
 
+    /* Callback to decide if the passed operation requires a running transaction (True),
+       leaves the state untouched (None) or should trigger a commit (False). A sensible
+       callback is "lambda operation: True". */
+    PyObject* operation_needs_transaction_callback;
+
     /* Exception objects */
     PyObject* Warning;
     PyObject* Error;

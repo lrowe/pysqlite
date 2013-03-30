@@ -358,10 +358,16 @@ class CursorTests(unittest.TestCase):
         try:
             self.cu.executemany("select ?", [(3,)])
             self.fail("should have raised a ProgrammingError")
-        except sqlite.ProgrammingError:
+        except sqlite.ProgrammingError, e:
+            if str(e).lower().find("select") == -1:
+                self.fail("error message should refer to select statement")
             return
         except:
             self.fail("raised wrong exception.")
+
+    def CheckExecuteManySelectNoIsolation(self):
+        self.cx.isolation_level = None
+        self.CheckExecuteManySelect()
 
     def CheckExecuteManyNotIterable(self):
         try:

@@ -76,6 +76,77 @@ static pysqlite_StatementKind detect_statement_type(char* statement)
     }
 }
 
+static int update_transaction_state_via_callback(
+        pysqlite_Connection* connection, PyObject* needs_transaction_callback, PyObject* operation)
+{
+    PyObject* result = NULL;
+    PyObject* want_transaction;
+
+    want_transaction = PyObject_CallFunctionObjArgs(needs_transaction_callback, operation, NULL);
+    if (want_transaction) {
+        if (want_transaction == Py_None) {
+            /* Don't care - leave old transaction state */
+        } else if (PyObject_IsTrue(want_transaction)) {
+            /* Operation requires an active transaction */
+            if (!connection->inTransaction) {
+                result = _pysqlite_connection_begin(connection);
+            }
+        } else {
+            /* Commit before running this operation */
+            if (connection->inTransaction) {
+                result = pysqlite_connection_commit(connection, NULL);
+            }
+        }
+    }
+
+    Py_XDECREF(want_transaction);
+    Py_XDECREF(result);
+    return PyErr_Occurred() != NULL;
+}
+
+static int update_transaction_state_for_operation(pysqlite_Cursor* self, PyObject* operation, int statement_type)
+{
+    PyObject *result;
+    PyObject *needs_transaction_callback;
+
+    if (self->connection->begin_statement) {
+        needs_transaction_callback = self->connection->operation_needs_transaction_callback;
+        if (needs_transaction_callback != Py_None) {
+            return update_transaction_state_via_callback(self->connection, needs_transaction_callback, operation);
+        }
+
+        switch (statement_type) {
+            case STATEMENT_SELECT:
+                /* Currently does not start a transaction. */
+                break;
+            case STATEMENT_UPDATE:
+            case STATEMENT_DELETE:
+            case STATEMENT_INSERT:
+            case STATEMENT_REPLACE:
+                if (!self->connection->inTransaction) {
+                    result = _pysqlite_connection_begin(self->connection);
+                    if (!result) {
+                        return 1;
+                    }
+                    Py_DECREF(result);
+                }
+                break;
+            case STATEMENT_OTHER:
+                /* it's a DDL statement or something similar
+                   - we better COMMIT first so it works for all cases */
+                if (self->connection->inTransaction) {
+                    result = pysqlite_connection_commit(self->connection, NULL);
+                    if (!result) {
+                        return 1;
+                    }
+                    Py_DECREF(result);
+                }
+                break;
+        }
+    }
+    return 0;
+}
+
 static int pysqlite_cursor_init(pysqlite_Cursor* self, PyObject* args, PyObject* kwargs)
 {
     pysqlite_Connection* connection;
@@ -460,7 +531,6 @@ PyObject* _pysqlite_query_execute(pysqlite_Cursor* self, int multiple, PyObject*
     int i;
     int rc;
     PyObject* func_args;
-    PyObject* result;
     int numcols;
     PY_LONG_LONG lastrowid;
     int statement_type;
@@ -600,39 +670,15 @@ PyObject* _pysqlite_query_execute(pysqlite_Cursor* self, int multiple, PyObject*
     pysqlite_statement_mark_dirty(self->statement);
 
     statement_type = detect_statement_type(operation_cstr);
-    if (self->connection->begin_statement) {
-        switch (statement_type) {
-            case STATEMENT_UPDATE:
-            case STATEMENT_DELETE:
-            case STATEMENT_INSERT:
-            case STATEMENT_REPLACE:
-                if (!self->connection->inTransaction) {
-                    result = _pysqlite_connection_begin(self->connection);
-                    if (!result) {
-                        goto error;
-                    }
-                    Py_DECREF(result);
-                }
-                break;
-            case STATEMENT_OTHER:
-                /* it's a DDL statement or something similar
-                   - we better COMMIT first so it works for all cases */
-                if (self->connection->inTransaction) {
-                    result = pysqlite_connection_commit(self->connection, NULL);
-                    if (!result) {
-                        goto error;
-                    }
-                    Py_DECREF(result);
-                }
-                break;
-            case STATEMENT_SELECT:
-                if (multiple) {
-                    PyErr_SetString(pysqlite_ProgrammingError,
-                                "You cannot execute SELECT statements in executemany().");
-                    goto error;
-                }
-                break;
-        }
+
+    if (multiple && statement_type == STATEMENT_SELECT) {
+        PyErr_SetString(pysqlite_ProgrammingError,
+                "You cannot execute SELECT statements in executemany().");
+        goto error;
+    }
+
+    if (update_transaction_state_for_operation(self, operation, statement_type) != 0) {
+        goto error;
     }
 
     while (1) {
