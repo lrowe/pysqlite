@@ -425,6 +425,37 @@ Connection Objects
    deleted since the database connection was opened.
 
 
+.. attribute:: Connection.operation_needs_transaction_callback
+
+   Callback to define when the module starts a transaction. The only argument
+   is the operation (as passed to :meth:`Cursor.execute`). A return code of
+   :const:`None` leaves the transaction state untouched, returning :const:`True`
+   ensures that a transaction is active before executing the operation.
+
+   The third meaningful return code is :const:`False` which will commit a running
+   transaction before the operation. This can be used to enable SQLite commands
+   that have to run outside a transaction (like `pragma foreign_keys=on`). This
+   can cause unexpected transaction boundaries though, so a better approach for that
+   use case is to temporarily disable transaction isolation as in this example:
+
+   .. literalinclude:: ../includes/sqlite3/pragma_foreign_keys.py
+
+   By default this is unused (:const:`None`) which means that an internal function
+   is used instead. This will start a transaction for insert, update, delete and
+   replace operations. A select will leave the old transaction state untouched and
+   any other operation will cause any running transaction to be committed first.
+
+   This callback is a non-standard extension over the DB-API 2.0.
+
+
+.. attribute:: Connection.in_transaction
+
+   Indicates the current transaction state of the underlying SQLite connection.
+   :const:`True` indicates that the connection is inside a transaction. Usually
+   you should not care since the DB-API approach is that a transaction is
+   automatically started on the first operation. Non-standard.
+
+
 .. attribute:: Connection.iterdump
 
    Returns an iterator to dump the database in an SQL text format.  Useful when

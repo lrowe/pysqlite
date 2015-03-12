@@ -95,6 +95,9 @@ int pysqlite_connection_init(pysqlite_Connection* self, PyObject* args, PyObject
     Py_INCREF(Py_None);
     self->row_factory = Py_None;
 
+    Py_INCREF(Py_None);
+    self->operation_needs_transaction_callback = Py_None;
+
     Py_INCREF(&PyUnicode_Type);
     self->text_factory = (PyObject*)&PyUnicode_Type;
 
@@ -289,6 +292,7 @@ void pysqlite_connection_dealloc(pysqlite_Connection* self)
     Py_XDECREF(self->isolation_level);
     Py_XDECREF(self->function_pinboard);
     Py_XDECREF(self->row_factory);
+    Py_XDECREF(self->operation_needs_transaction_callback);
     Py_XDECREF(self->text_factory);
     Py_XDECREF(self->collations);
     Py_XDECREF(self->statements);
@@ -1159,6 +1163,15 @@ static PyObject* pysqlite_connection_get_total_changes(pysqlite_Connection* self
     }
 }
 
+static PyObject* pysqlite_connection_in_transaction(pysqlite_Connection* self, void* unused)
+{
+    if (!pysqlite_check_connection(self)) {
+        return NULL;
+    } else {
+        return PyBool_FromLong(!sqlite3_get_autocommit(self->db));
+    }
+}
+
 static int pysqlite_connection_set_isolation_level(pysqlite_Connection* self, PyObject* isolation_level)
 {
     PyObject* res;
@@ -1589,6 +1602,8 @@ PyDoc_STR("SQLite database connection object.");
 static PyGetSetDef connection_getset[] = {
     {"isolation_level",  (getter)pysqlite_connection_get_isolation_level, (setter)pysqlite_connection_set_isolation_level},
     {"total_changes",  (getter)pysqlite_connection_get_total_changes, (setter)0},
+    {"in_transaction", (getter)pysqlite_connection_in_transaction, (setter)0,
+        PyDoc_STR("True if connection has an active transaction, False otherwise. Non-standard.")},
     {NULL}
 };
 
@@ -1652,6 +1667,12 @@ static struct PyMemberDef connection_members[] =
     {"NotSupportedError", T_OBJECT, offsetof(pysqlite_Connection, NotSupportedError), RO},
     {"row_factory", T_OBJECT, offsetof(pysqlite_Connection, row_factory)},
     {"text_factory", T_OBJECT, offsetof(pysqlite_Connection, text_factory)},
+    {"operation_needs_transaction_callback", T_OBJECT, offsetof(pysqlite_Connection, operation_needs_transaction_callback), 0,
+        PyDoc_STR("If this is not None, every operation executed is first passed to this callback to\n"
+                "decide if it has to be run inside a transaction. It should be safe for this function\n"
+                "to always return True, making each operation start a transaction. Returning None leaves\n"
+                "the transaction state unchanged while False will commit a running transaction automatically.\n"
+                "Non-standard.")},
     {NULL}
 };
 

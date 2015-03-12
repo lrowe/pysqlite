@@ -53,6 +53,29 @@ class TransactionTests(unittest.TestCase):
         except OSError:
             pass
 
+    def CheckHasActiveTransaction(self):
+        """Test that in_transaction returns the actual transaction state."""
+        self.assertFalse(self.con1.in_transaction)
+        self.cur1.execute("create table test(i)")
+        self.cur1.execute("insert into test(i) values (5)")
+        self.assertTrue(self.con1.in_transaction)
+        self.con1.commit()
+        self.assertFalse(self.con1.in_transaction)
+
+        # Manage the transaction state manually and check if it is detected correctly.
+        self.con2.isolation_level = None
+        self.assertFalse(self.con2.in_transaction)
+        self.cur2.execute("begin")
+        self.assertTrue(self.con2.in_transaction)
+        self.con2.commit()
+        self.assertFalse(self.con2.in_transaction)
+
+        self.cur2.execute("begin")
+        self.assertTrue(self.con2.in_transaction)
+        self.cur2.execute("commit")
+        self.assertFalse(self.con2.in_transaction)
+
+
     def CheckDMLdoesAutoCommitBefore(self):
         self.cur1.execute("create table test(i)")
         self.cur1.execute("insert into test(i) values (5)")
@@ -167,6 +190,107 @@ class TransactionTests(unittest.TestCase):
             pass
         except:
             self.fail("InterfaceError should have been raised")
+
+    def CheckDropTableRollback(self):
+        """
+        Checks that drop table can be run inside a transaction and will
+        roll back correctly.
+        """
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table test(x)")
+        self.cur1.execute("insert into test(x) values (5)")
+        self.con1.commit()
+        self.cur1.execute("drop table test")
+        self.con1.rollback()
+        # Table should still exist.
+        self.cur1.execute("select * from test")
+
+    def CheckCreateTableRollback(self):
+        """Checks that create table runs inside a transaction and can be rolled back."""
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table test(x)")
+        self.con1.rollback()
+        # Table test was rolled back so this should work
+        self.cur1.execute("create table test(x)")
+
+    def CheckSavepoints(self):
+        """Trivial savepoint check."""
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table test(x)")
+        self.con1.commit()
+        self.cur1.execute("insert into test(x) values (1)")
+        self.cur1.execute("savepoint foobar")
+        self.cur1.execute("insert into test(x) values (2)")
+        self.cur1.execute("rollback to savepoint foobar")
+        self.con1.commit()
+        self.cur2.execute("select x from test")
+        res = self.cur2.fetchall()
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0][0], 1)
+
+    def CheckCreateIndexRollback(self):
+        """Check that create index is transactional."""
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table test(x integer)")
+        self.cur1.execute("insert into test(x) values (1)")
+        self.con1.commit()
+        self.cur1.execute("create index myidx on test(x)")
+        self.assertTrue(self.cur1.execute("pragma index_info(myidx)").fetchone())
+        self.cur1.execute("insert into test(x) values (2)")
+        self.con1.rollback()
+        self.assertFalse(self.cur1.execute("pragma index_info(myidx)").fetchone())
+
+    def CheckColumnAddRollback(self):
+        """Check that adding a column is transactional."""
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table test(x integer)")
+        self.cur1.execute("insert into test(x) values (42)")
+        self.con1.commit()
+        self.cur1.execute("alter table test add column y integer default 37")
+        self.assertEqual(len(self.cur1.execute("select * from test").fetchone()), 2)
+        self.con1.rollback()
+        self.assertEqual(len(self.cur1.execute("select * from test").fetchone()), 1)
+        try:
+            self.cur1.execute("insert into test(x,y) values (1,2)")
+            self.fail("Column y should have been rolled back.")
+        except sqlite.OperationalError:
+            pass
+
+    def CheckTableRenameRollback(self):
+        """Check that renaming a table is transactional."""
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table foo(x integer)")
+        self.con1.commit()
+        self.cur1.execute("alter table foo rename to bar")
+        self.cur1.execute("select * from bar")
+        try:
+            self.cur1.execute("select * from foo")
+            self.fail("Table foo should have been renamed to bar")
+        except sqlite.OperationalError:
+            pass
+        self.con1.rollback()
+        self.cur1.execute("select * from foo")
+        try:
+            self.cur1.execute("select * from bar")
+            self.fail("Renaming the table should have been rolled back.")
+        except sqlite.OperationalError:
+            pass
+
+    def CheckDropIndexRollback(self):
+        """Check that dropping an index is transactional."""
+        self.con1.operation_needs_transaction_callback = lambda x: True
+        self.cur1.execute("create table foo(x integer)")
+        self.cur1.execute("create index myidx on foo(x)")
+        self.con1.commit()
+        self.cur1.execute("drop index myidx")
+        self.con1.rollback()
+        try:
+            self.cur1.execute("create index myidx on foo(x)")
+            self.fail("Index myidx should exist here (dropping it was rolled back).")
+        except sqlite.OperationalError as e:
+            # OperationalError: index myidx already exists
+            pass
+
 
 class SpecialCommandTests(unittest.TestCase):
     def setUp(self):
